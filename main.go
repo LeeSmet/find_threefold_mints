@@ -144,7 +144,6 @@ func main() {
 			continue
 		}
 		gms = append(gms, tftMint.toGeneral())
-		// fmt.Printf("%s,%s,%s,%s,%s\n", tftMint.txID, tftMint.ts.Format(time.RFC822), tftMint.to, stropesToString(tftMint.amount), tftMint.memo)
 	}
 
 	f, err := os.Create("all_mints.csv")
