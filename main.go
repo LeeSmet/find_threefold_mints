@@ -36,6 +36,12 @@ type rivineMint struct {
 	memo   string
 }
 
+func (rm rivineMint) toGeneral() generalMint {
+	// these are the same, as we use the same precision
+	return generalMint(rm)
+}
+
+// mint on the stellar network.
 type mint struct {
 	txID   string
 	ts     time.Time
@@ -44,11 +50,37 @@ type mint struct {
 	memo   string
 }
 
+func (m mint) toGeneral() generalMint {
+	return generalMint {
+		txID: m.txID,
+		ts: m.ts,
+		to: m.to,
+		amount: m.amount * 100,
+		memo: m.memo,
+	}
+}
+
 type burn struct {
 	txID   string
 	ts     time.Time
 	from   string
 	amount uint64
+}
+
+// generalMint is mint info in a network independant format. Specifically, the
+// "amount" is expressed with 9 digits precision
+type generalMint struct {
+	txID string
+	ts time.Time
+	to string
+	// amount with 9 digits precision
+	amount uint64
+	memo string
+}
+
+// print the amount of tokens minted as a string.
+func (gm generalMint) stringAmount() string {
+	return fmt.Sprintf("%d.%d", gm.amount / 1000000000, gm.amount % 1000000000)
 }
 
 // Set up the transaction controllers, needed to decode mint txes (and others we
@@ -68,15 +100,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Println("============")
-	fmt.Println("rivine mints")
-	fmt.Println("============")
-
-	for _, rmint := range rivMints {
-		fmt.Printf("%s,%s,%s,%s,%s\n", rmint.txID, rmint.ts.Format(time.RFC822), rmint.to, rivineToString(rmint.amount), rmint.memo)
-	}
-
 	tftaMints, tftaBurns, err := findAccPayments(tftaIssuer)
 	if err != nil {
 		panic(err)
@@ -85,10 +108,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	gms := []generalMint{}
 
-	fmt.Println("==========")
-	fmt.Println("TFTA mints")
-	fmt.Println("==========")
+	for _, rmint := range rivMints {
+		gms = append(gms, rmint.toGeneral())
+	}
 
 	for _, tftaMint := range tftaMints {
 		isDeauth, err := isDeauthHash(tftaMint.memo)
@@ -98,12 +122,8 @@ func main() {
 		if isDeauth {
 			continue
 		}
-		fmt.Printf("%s,%s,%s,%s,%s\n", tftaMint.txID, tftaMint.ts.Format(time.RFC822), tftaMint.to, stropesToString(tftaMint.amount), tftaMint.memo)
+		gms = append(gms, tftaMint.toGeneral())
 	}
-
-	fmt.Println("==========")
-	fmt.Println("TFT mints")
-	fmt.Println("==========")
 
 	for _, tftMint := range tftMints {
 		isConverstion := false
@@ -123,7 +143,17 @@ func main() {
 		if isDeauth {
 			continue
 		}
-		fmt.Printf("%s,%s,%s,%s,%s\n", tftMint.txID, tftMint.ts.Format(time.RFC822), tftMint.to, stropesToString(tftMint.amount), tftMint.memo)
+		gms = append(gms, tftMint.toGeneral())
+		// fmt.Printf("%s,%s,%s,%s,%s\n", tftMint.txID, tftMint.ts.Format(time.RFC822), tftMint.to, stropesToString(tftMint.amount), tftMint.memo)
+	}
+
+	f, err := os.Create("all_mints.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Trasaction ID,Transaction time,Recipient,Amount,Memo\n")
+	for _, gm := range gms {
+		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n",gm.txID, gm.ts.Format(time.RFC822),gm.to,gm.stringAmount(),gm.memo))
 	}
 }
 
