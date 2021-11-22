@@ -28,6 +28,11 @@ const tftaIssuer = "GBUT4GP5GJ6B3XW5PXENHQA7TXJI5GOPW3NF4W3ZIW6OOO4ISY6WNLN2"
 
 const TransactionVersionMinterDefinition types.TransactionVersion = 129
 
+// if a transaction is 2 days later than the previous one, consider it a new
+// cluster. This can probably be shorted to an hour or so, but 2 days should
+// not cause any trouble either.
+const clusterCutoff = time.Hour * 48
+
 type rivineMint struct {
 	txID   string
 	ts     time.Time
@@ -81,6 +86,35 @@ type generalMint struct {
 // print the amount of tokens minted as a string.
 func (gm generalMint) stringAmount() string {
 	return fmt.Sprintf("%d.%09d", gm.amount / 1000000000, gm.amount % 1000000000)
+}
+
+// payoutCluster of mint txes which should have occurred as a result of the same
+// period
+type payoutCluster struct {
+	start time.Time
+	end time.Time
+	transactions uint
+	recipients map[string]struct{}
+	amount uint64
+}
+
+// addMint to the payoutCluster. Returns if the transaction fits in the
+// cluster. If it does not fit, the cluster is not updated.
+// It is the callers responsibility to ensure the same mint is only added once.
+func (pc *payoutCluster) addMint(gm generalMint) bool {
+	if gm.ts.After(pc.end.Add(clusterCutoff)) {
+		return false
+	}
+	// mint is sufficiently close to the last one in the cluster
+	pc.end = gm.ts
+	pc.transactions += 1
+	pc.recipients[gm.to] = struct{}{}
+	pc.amount += gm.amount
+	return true
+}
+
+func (pc payoutCluster) stringAmount() string {
+	return fmt.Sprintf("%d.%09d", pc.amount / 1000000000, pc.amount % 1000000000)
 }
 
 // Set up the transaction controllers, needed to decode mint txes (and others we
@@ -153,6 +187,40 @@ func main() {
 	f.WriteString("Trasaction ID,Transaction time,Recipient,Amount,Memo\n")
 	for _, gm := range gms {
 		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n",gm.txID, gm.ts.Format(time.RFC822),gm.to,gm.stringAmount(),gm.memo))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
+	}
+
+	// Now cluster payouts per cycle. Very fancy clustering algorithm ( ͡° ͜ʖ ͡°)
+	// Note that due to the way the data set is constructed, it is already sorted
+	// on timestamp.
+	clusters := []payoutCluster{}
+	for _, gm := range gms {
+		// If there is no previous cluster, or the mint does not fit in the previous
+		// cluster, create a new one.
+		if len(clusters) == 0 || !clusters[len(clusters)-1].addMint(gm) {
+			clusters = append(clusters, payoutCluster {
+				start: gm.ts,
+				end: gm.ts,
+				transactions: 1,
+				recipients: map[string]struct{}{gm.to: {}},
+				amount: gm.amount,
+			})
+		}
+	}
+
+
+	f, err = os.Create("cluster_mints.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Cluster start,Cluster end,Transaction count,Unique recipients,Amount\n")
+	for _, c := range clusters {
+		f.WriteString(fmt.Sprintf("%s,%s,%d,%d,%s\n",c.start.Format(time.RFC822), c.end.Format(time.RFC822),c.transactions,len(c.recipients),c.stringAmount()))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
 	}
 }
 
