@@ -80,7 +80,7 @@ type generalMint struct {
 
 // print the amount of tokens minted as a string.
 func (gm generalMint) stringAmount() string {
-	return fmt.Sprintf("%d.%d", gm.amount / 1000000000, gm.amount % 1000000000)
+	return fmt.Sprintf("%d.%09d", gm.amount / 1000000000, gm.amount % 1000000000)
 }
 
 // Set up the transaction controllers, needed to decode mint txes (and others we
@@ -227,14 +227,6 @@ func findAccPayments(account string) ([]mint, []burn, error) {
 	return mints, burns, nil
 }
 
-func isDeauthHash(hash string) (bool, error) {
-	res, err := http.Get(fmt.Sprintf("https://explorer2.threefoldtoken.com/explorer/hashes/%s", hash))
-	if err != nil {
-		return false, errors.Wrap(err, "could not fetch hash on explorer")
-	}
-	return res.StatusCode == 200, nil
-}
-
 func getRivineMints() ([]rivineMint, error) {
 	client := http.DefaultClient
 	mints := []rivineMint{}
@@ -275,13 +267,14 @@ func getRivineMints() ([]rivineMint, error) {
 	return mints, nil
 }
 
-func stropesToString(stropes uint64) string {
-	return fmt.Sprintf("%d.%d", stropes/10000000, stropes%10000000)
+func isDeauthHash(hash string) (bool, error) {
+	res, err := http.Get(fmt.Sprintf("https://explorer2.threefoldtoken.com/explorer/hashes/%s", hash))
+	if err != nil {
+		return false, errors.Wrap(err, "could not fetch hash on explorer")
+	}
+	return res.StatusCode == 200, nil
 }
 
-func rivineToString(amount uint64) string {
-	return fmt.Sprintf("%d.%d", amount/1000000000, amount%1000000000)
-}
 
 func stellarStringToStropes(amount string) (uint64, error) {
 	parts := strings.Split(amount, ".")
