@@ -28,10 +28,10 @@ const tftaIssuer = "GBUT4GP5GJ6B3XW5PXENHQA7TXJI5GOPW3NF4W3ZIW6OOO4ISY6WNLN2"
 
 const TransactionVersionMinterDefinition types.TransactionVersion = 129
 
-// if a transaction is 2 days later than the previous one, consider it a new
-// cluster. This can probably be shorted to an hour or so, but 2 days should
-// not cause any trouble either.
-const clusterCutoff = time.Hour * 48
+// if a transaction is 7 days 4 hours later than the previous one, consider it a new
+// cluster. This is chosen since there is an outlier which is just covered by this,
+// but with this time the payout clusters are still properly separated.
+const clusterCutoff = time.Hour * 172
 
 type rivineMint struct {
 	txID   string
