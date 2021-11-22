@@ -14,7 +14,7 @@ tokens which have been minted:
 - stellar based TFT
 
 Since we moved between different blockchains, all tokens on stellar are technically
-newly minted tokens. However since these already exit on an old blockchain, that
+newly minted tokens. However since these already exist on an old blockchain, that
 would give a wrong impression. To be clear, a mint is defined as a generation of
 new, previously unexisting tokens, as a result of connecting capacity to the threefold
 grid. To this end, we must detect and differentiate, and ultimately remove, tokens
