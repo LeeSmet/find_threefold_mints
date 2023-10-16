@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -56,12 +57,12 @@ type mint struct {
 }
 
 func (m mint) toGeneral() generalMint {
-	return generalMint {
-		txID: m.txID,
-		ts: m.ts,
-		to: m.to,
+	return generalMint{
+		txID:   m.txID,
+		ts:     m.ts,
+		to:     m.to,
 		amount: m.amount * 100,
-		memo: m.memo,
+		memo:   m.memo,
 	}
 }
 
@@ -76,26 +77,26 @@ type burn struct {
 // "amount" is expressed with 9 digits precision
 type generalMint struct {
 	txID string
-	ts time.Time
-	to string
+	ts   time.Time
+	to   string
 	// amount with 9 digits precision
 	amount uint64
-	memo string
+	memo   string
 }
 
 // print the amount of tokens minted as a string.
 func (gm generalMint) stringAmount() string {
-	return fmt.Sprintf("%d.%09d", gm.amount / 1000000000, gm.amount % 1000000000)
+	return fmt.Sprintf("%d.%09d", gm.amount/1000000000, gm.amount%1000000000)
 }
 
 // payoutCluster of mint txes which should have occurred as a result of the same
 // period
 type payoutCluster struct {
-	start time.Time
-	end time.Time
+	start        time.Time
+	end          time.Time
 	transactions uint
-	recipients map[string]struct{}
-	amount uint64
+	recipients   map[string]struct{}
+	amount       uint64
 }
 
 // addMint to the payoutCluster. Returns if the transaction fits in the
@@ -114,7 +115,7 @@ func (pc *payoutCluster) addMint(gm generalMint) bool {
 }
 
 func (pc payoutCluster) stringAmount() string {
-	return fmt.Sprintf("%d.%09d", pc.amount / 1000000000, pc.amount % 1000000000)
+	return fmt.Sprintf("%d.%09d", pc.amount/1000000000, pc.amount%1000000000)
 }
 
 // Set up the transaction controllers, needed to decode mint txes (and others we
@@ -127,7 +128,6 @@ func init() {
 	}
 	tfcli.RegisterStandardTransactions(bc)
 }
-
 
 func main() {
 	rivMints, err := getRivineMints()
@@ -186,7 +186,7 @@ func main() {
 	}
 	f.WriteString("Trasaction ID,Transaction time,Recipient,Amount,Memo\n")
 	for _, gm := range gms {
-		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n",gm.txID, gm.ts.Format(time.RFC822),gm.to,gm.stringAmount(),gm.memo))
+		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n", gm.txID, gm.ts.Format(time.RFC822), gm.to, gm.stringAmount(), gm.memo))
 	}
 	if err = f.Close(); err != nil {
 		panic(err)
@@ -200,16 +200,15 @@ func main() {
 		// If there is no previous cluster, or the mint does not fit in the previous
 		// cluster, create a new one.
 		if len(clusters) == 0 || !clusters[len(clusters)-1].addMint(gm) {
-			clusters = append(clusters, payoutCluster {
-				start: gm.ts,
-				end: gm.ts,
+			clusters = append(clusters, payoutCluster{
+				start:        gm.ts,
+				end:          gm.ts,
 				transactions: 1,
-				recipients: map[string]struct{}{gm.to: {}},
-				amount: gm.amount,
+				recipients:   map[string]struct{}{gm.to: {}},
+				amount:       gm.amount,
 			})
 		}
 	}
-
 
 	f, err = os.Create("cluster_mints.csv")
 	if err != nil {
@@ -217,7 +216,7 @@ func main() {
 	}
 	f.WriteString("Cluster start,Cluster end,Transaction count,Unique recipients,Amount\n")
 	for _, c := range clusters {
-		f.WriteString(fmt.Sprintf("%s,%s,%d,%d,%s\n",c.start.Format(time.RFC822), c.end.Format(time.RFC822),c.transactions,len(c.recipients),c.stringAmount()))
+		f.WriteString(fmt.Sprintf("%s,%s,%d,%d,%s\n", c.start.Format(time.RFC822), c.end.Format(time.RFC822), c.transactions, len(c.recipients), c.stringAmount()))
 	}
 	if err = f.Close(); err != nil {
 		panic(err)
@@ -296,20 +295,58 @@ func findAccPayments(account string) ([]mint, []burn, error) {
 }
 
 func getRivineMints() ([]rivineMint, error) {
-	client := http.DefaultClient
 	mints := []rivineMint{}
-	for i := 1; i < 700000; i++ {
-		fmt.Fprintf(os.Stderr, "\rProcessing block %d", i)
+	mintChan := make(chan rivineMint)
+	wg := sync.WaitGroup{}
+	wg.Add(100)
+
+	for i := 1; i <= 100; i++ {
+		go fetchRivineMint(i, mintChan, &wg)
+	}
+
+	doneChan := make(chan struct{})
+	go func() {
+
+		wg.Wait()
+		doneChan <- struct{}{}
+	}()
+
+L:
+	for {
+		select {
+		case mint := <-mintChan:
+			mints = append(mints, mint)
+		case <-doneChan:
+			break L
+
+		}
+	}
+
+	return mints, nil
+}
+
+func fetchRivineMint(blockNum int, mintChan chan<- rivineMint, wg *sync.WaitGroup) {
+	for i := blockNum; i < 700000; i += 100 {
+		client := http.DefaultClient
+		if blockNum%100 == 0 {
+
+			//fmt.Fprintf(os.Stderr, "\rProcessing block %d", i)
+			fmt.Fprintf(os.Stderr, "\rProcessing block %d", i)
+		}
 		blockData, err := client.Get(fmt.Sprintf("https://explorer2.threefoldtoken.com/explorer/blocks/%d", i))
 		if err != nil {
-			return nil, errors.Wrap(err, "could not get explorer block")
+			panic("block get failed")
+			//return nil, errors.Wrap(err, "could not get explorer block")
 		}
 		if blockData.StatusCode != 200 {
-			return nil, fmt.Errorf("invalid response code %d when loading block %d", blockData.StatusCode, i)
+			panic("non 200 status code")
+			//return nil, fmt.Errorf("invalid response code %d when loading block %d", blockData.StatusCode, i)
 		}
+		//block := api.ExplorerBlockGET{}
 		block := api.ExplorerBlockGET{}
 		if err = json.NewDecoder(blockData.Body).Decode(&block); err != nil {
-			return nil, errors.Wrap(err, "could not decode block")
+			panic("could not decode block")
+			//return nil, errors.Wrap(err, "could not decode block")
 		}
 		for _, tx := range block.Block.Transactions {
 			if tx.RawTransaction.Version != TransactionVersionMinterDefinition {
@@ -319,20 +356,19 @@ func getRivineMints() ([]rivineMint, error) {
 			for _, co := range tx.RawTransaction.CoinOutputs {
 				val, err := co.Value.Uint64()
 				if err != nil {
-					return nil, errors.Wrap(err, "could not interpret value of co")
+					fmt.Printf("could not interpret coin output: %s", err)
 				}
-				mints = append(mints, rivineMint{
+				mintChan <- rivineMint{
 					txID:   tx.ID.String(),
 					ts:     time.Unix(int64(tx.Timestamp), 0),
 					to:     co.Condition.UnlockHash().String(),
 					amount: val,
 					memo:   hex.EncodeToString(tx.RawTransaction.ArbitraryData),
-				})
+				}
 			}
 		}
 	}
-
-	return mints, nil
+	wg.Done()
 }
 
 func isDeauthHash(hash string) (bool, error) {
@@ -342,7 +378,6 @@ func isDeauthHash(hash string) (bool, error) {
 	}
 	return res.StatusCode == 200, nil
 }
-
 
 func stellarStringToStropes(amount string) (uint64, error) {
 	parts := strings.Split(amount, ".")
