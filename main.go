@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -250,7 +251,6 @@ func findAccPayments(account string) ([]mint, []burn, error) {
 		}
 		cursor = ops.Embedded.Records[len(ops.Embedded.Records)-1].PagingToken()
 		for _, op := range ops.Embedded.Records {
-			fmt.Fprintf(os.Stderr, "Processing transaction %s", op.GetTransactionHash())
 			if payment, ok := op.(operations.Payment); ok {
 				am, err := stellarStringToStropes(payment.Amount)
 				if err != nil {
@@ -322,6 +322,11 @@ L:
 		}
 	}
 
+	// Slice won't be sorted if we use more than 1 goroutine
+	sort.Slice(mints, func(i, j int) bool {
+		return mints[i].ts.Unix() < mints[j].ts.Unix()
+	})
+
 	return mints, nil
 }
 
@@ -356,7 +361,7 @@ func fetchRivineMint(blockNum int, mintChan chan<- rivineMint, wg *sync.WaitGrou
 			for _, co := range tx.RawTransaction.CoinOutputs {
 				val, err := co.Value.Uint64()
 				if err != nil {
-					fmt.Printf("could not interpret coin output: %s", err)
+					fmt.Fprintf(os.Stderr, "could not interpret coin output: %s", err)
 				}
 				mintChan <- rivineMint{
 					txID:   tx.ID.String(),
