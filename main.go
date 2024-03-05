@@ -161,14 +161,14 @@ func main() {
 	}
 
 	for _, tftMint := range tftMints {
-		isConverstion := false
+		isConversion := false
 		for _, tftaBurn := range tftaBurns {
 			if tftMint.memo == tftaBurn.txID {
-				isConverstion = true
+				isConversion = true
 				break
 			}
 		}
-		if isConverstion {
+		if isConversion {
 			continue
 		}
 		isDeauth, err := isDeauthHash(tftMint.memo)
