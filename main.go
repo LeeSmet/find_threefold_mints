@@ -23,6 +23,8 @@ import (
 	"github.com/threefoldtech/rivine/types"
 )
 
+const tfta = "TFTA"
+const tft = "TFT"
 const tftasset = "TFT:GBOVQKJYHXRR3DX6NOX2RRYFRCUMSADGDESTDNBDS6CDVLGVESRTAC47"
 const tftaasset = "TFTA:GBUT4GP5GJ6B3XW5PXENHQA7TXJI5GOPW3NF4W3ZIW6OOO4ISY6WNLN2"
 const tftIssuer = "GBOVQKJYHXRR3DX6NOX2RRYFRCUMSADGDESTDNBDS6CDVLGVESRTAC47"
@@ -119,6 +121,34 @@ func (pc payoutCluster) stringAmount() string {
 	return fmt.Sprintf("%d.%09d", pc.amount/1000000000, pc.amount%1000000000)
 }
 
+// A migration for rivine to TFT(A)
+type migration struct {
+	asset      string
+	time       time.Time
+	amount     uint64
+	receiver   string
+	deauthHash string
+}
+
+// print the amount of tokens migrated as a string.
+func (m migration) stringAmount() string {
+	return fmt.Sprintf("%d.%07d", m.amount/10000000, m.amount%10000000)
+}
+
+// A conversion from TFTA to TFT
+type conversion struct {
+	account  string
+	amount   uint64
+	burnTime time.Time
+	mintTime time.Time
+	burnHash string
+}
+
+// print the amount of tokens converted as a string.
+func (c conversion) stringAmount() string {
+	return fmt.Sprintf("%d.%07d", c.amount/10000000, c.amount%10000000)
+}
+
 // Set up the transaction controllers, needed to decode mint txes (and others we
 // don't care about, but which would cause failure of validation).
 func init() {
@@ -144,6 +174,8 @@ func main() {
 		panic(err)
 	}
 	gms := []generalMint{}
+	migrations := []migration{}
+	conversions := []conversion{}
 
 	for _, rmint := range rivMints {
 		gms = append(gms, rmint.toGeneral())
@@ -155,6 +187,13 @@ func main() {
 			panic(err)
 		}
 		if isDeauth {
+			migrations = append(migrations, migration{
+				asset:      tfta,
+				time:       tftaMint.ts,
+				amount:     tftaMint.amount,
+				receiver:   tftaMint.to,
+				deauthHash: tftaMint.memo,
+			})
 			continue
 		}
 		gms = append(gms, tftaMint.toGeneral())
@@ -165,6 +204,13 @@ func main() {
 		for _, tftaBurn := range tftaBurns {
 			if tftMint.memo == tftaBurn.txID {
 				isConversion = true
+				conversions = append(conversions, conversion{
+					account:  tftaBurn.from,
+					amount:   tftaBurn.amount,
+					burnTime: tftaBurn.ts,
+					mintTime: tftMint.ts,
+					burnHash: tftaBurn.txID,
+				})
 				break
 			}
 		}
@@ -176,6 +222,13 @@ func main() {
 			panic(err)
 		}
 		if isDeauth {
+			migrations = append(migrations, migration{
+				asset:      tft,
+				time:       tftMint.ts,
+				amount:     tftMint.amount,
+				receiver:   tftMint.to,
+				deauthHash: tftMint.memo,
+			})
 			continue
 		}
 		gms = append(gms, tftMint.toGeneral())
@@ -188,6 +241,30 @@ func main() {
 	f.WriteString("Trasaction ID,Transaction time,Recipient,Amount,Memo\n")
 	for _, gm := range gms {
 		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n", gm.txID, gm.ts.Format(time.RFC822), gm.to, gm.stringAmount(), gm.memo))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
+	}
+
+	f, err = os.Create("migrations.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Recipient,Transaction time,Amount,Asset,Deauth hash\n")
+	for _, m := range migrations {
+		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n", m.receiver, m.time.Format(time.RFC822), m.stringAmount(), m.asset, m.deauthHash))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
+	}
+
+	f, err = os.Create("conversions.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Account,TFTA burn time,TFT mint time,Amount,Burn hash\n")
+	for _, c := range conversions {
+		f.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n", c.account, c.burnTime.Format(time.RFC822), c.mintTime.Format(time.RFC822), c.stringAmount(), c.burnHash))
 	}
 	if err = f.Close(); err != nil {
 		panic(err)
