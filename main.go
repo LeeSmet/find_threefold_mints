@@ -161,7 +161,7 @@ func init() {
 }
 
 func main() {
-	rivMints, err := getRivineMints()
+	rivMints, rivineAddresses, err := getRivineMints()
 	if err != nil {
 		panic(err)
 	}
@@ -270,6 +270,18 @@ func main() {
 		panic(err)
 	}
 
+	f, err = os.Create("rivine_addresses.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Address\n")
+	for _, addr := range rivineAddresses {
+		f.WriteString(fmt.Sprintf("%s\n", addr))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
+	}
+
 	// Now cluster payouts per cycle. Very fancy clustering algorithm ( ͡° ͜ʖ ͡°)
 	// Note that due to the way the data set is constructed, it is already sorted
 	// on timestamp.
@@ -371,14 +383,16 @@ func findAccPayments(account string) ([]mint, []burn, error) {
 	return mints, burns, nil
 }
 
-func getRivineMints() ([]rivineMint, error) {
+func getRivineMints() ([]rivineMint, []string, error) {
+	addressMap := make(map[string]struct{})
 	mints := []rivineMint{}
 	mintChan := make(chan rivineMint)
+	addressChan := make(chan string)
 	wg := sync.WaitGroup{}
 	wg.Add(100)
 
 	for i := 1; i <= 100; i++ {
-		go fetchRivineMint(i, mintChan, &wg)
+		go fetchRivineMint(i, mintChan, addressChan, &wg)
 	}
 
 	doneChan := make(chan struct{})
@@ -393,6 +407,8 @@ L:
 		select {
 		case mint := <-mintChan:
 			mints = append(mints, mint)
+		case address := <-addressChan:
+			addressMap[address] = struct{}{}
 		case <-doneChan:
 			break L
 
@@ -404,10 +420,20 @@ L:
 		return mints[i].ts.Unix() < mints[j].ts.Unix()
 	})
 
-	return mints, nil
+	addresses := []string{}
+	for address := range addressMap {
+		addresses = append(addresses, address)
+	}
+
+	// Slice won't be sorted if we use more than 1 goroutine
+	sort.Slice(addresses, func(i, j int) bool {
+		return addresses[i] < addresses[j]
+	})
+
+	return mints, addresses, nil
 }
 
-func fetchRivineMint(blockNum int, mintChan chan<- rivineMint, wg *sync.WaitGroup) {
+func fetchRivineMint(blockNum int, mintChan chan<- rivineMint, addressChan chan<- string, wg *sync.WaitGroup) {
 	for i := blockNum; i < 700000; i += 100 {
 		client := http.DefaultClient
 		if blockNum%100 == 0 {
@@ -431,6 +457,9 @@ func fetchRivineMint(blockNum int, mintChan chan<- rivineMint, wg *sync.WaitGrou
 			//return nil, errors.Wrap(err, "could not decode block")
 		}
 		for _, tx := range block.Block.Transactions {
+			for _, co := range tx.RawTransaction.CoinOutputs {
+				addressChan <- co.Condition.UnlockHash().String()
+			}
 			if tx.RawTransaction.Version != TransactionVersionMinterDefinition {
 				continue
 			}
