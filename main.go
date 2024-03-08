@@ -76,6 +76,11 @@ type burn struct {
 	amount uint64
 }
 
+// print the amount of tokens burned as a string.
+func (b burn) stringAmount() string {
+	return fmt.Sprintf("%d.%07d", b.amount/10000000, b.amount%10000000)
+}
+
 // generalMint is mint info in a network independant format. Specifically, the
 // "amount" is expressed with 9 digits precision
 type generalMint struct {
@@ -169,7 +174,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	tftMints, _, err := findAccPayments(tftIssuer)
+	tftMints, tftBurns, err := findAccPayments(tftIssuer)
 	if err != nil {
 		panic(err)
 	}
@@ -201,16 +206,18 @@ func main() {
 
 	for _, tftMint := range tftMints {
 		isConversion := false
-		for _, tftaBurn := range tftaBurns {
-			if tftMint.memo == tftaBurn.txID {
+		for i := range tftaBurns {
+			if tftMint.memo == tftaBurns[i].txID {
 				isConversion = true
 				conversions = append(conversions, conversion{
-					account:  tftaBurn.from,
-					amount:   tftaBurn.amount,
-					burnTime: tftaBurn.ts,
+					account:  tftaBurns[i].from,
+					amount:   tftaBurns[i].amount,
+					burnTime: tftaBurns[i].ts,
 					mintTime: tftMint.ts,
-					burnHash: tftaBurn.txID,
+					burnHash: tftaBurns[i].txID,
 				})
+				tftaBurns[i] = tftaBurns[len(tftaBurns)-1]
+				tftaBurns = tftaBurns[:len(tftaBurns)-1]
 				break
 			}
 		}
@@ -277,6 +284,21 @@ func main() {
 	f.WriteString("Address\n")
 	for _, addr := range rivineAddresses {
 		f.WriteString(fmt.Sprintf("%s\n", addr))
+	}
+	if err = f.Close(); err != nil {
+		panic(err)
+	}
+
+	f, err = os.Create("stellar_burns.csv")
+	if err != nil {
+		panic(err)
+	}
+	f.WriteString("Trasaction ID,Transaction time,Asset,Sender,Amount\n")
+	for _, b := range tftaBurns {
+		f.WriteString(fmt.Sprintf("%s,%s,TFTA,%s,%s\n", b.txID, b.ts.Format(time.RFC822), b.from, b.stringAmount()))
+	}
+	for _, b := range tftBurns {
+		f.WriteString(fmt.Sprintf("%s,%s,TFT,%s,%s\n", b.txID, b.ts.Format(time.RFC822), b.from, b.stringAmount()))
 	}
 	if err = f.Close(); err != nil {
 		panic(err)
